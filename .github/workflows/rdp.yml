@@ -1,0 +1,28 @@
+name: Ubuntu VNC
+
+on: [workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Desktop Environment & VNC
+        run: |
+          sudo apt update
+          sudo apt install xfce4 xfce4-goodies tightvncserver git -y
+          vncserver :1
+          vncserver -kill :1
+          mkdir -p ~/.vnc
+          echo "#!/bin/bash
+          xrdb $HOME/.Xresources
+          startxfce4 &" > ~/.vnc/xstartup
+          chmod +x ~/.vnc/xstartup
+          vncserver :1 -geometry 1280x720 -depth 24
+
+      - name: Setup noVNC Server
+        run: |
+          git clone https://github.com/novnc/noVNC.git ~/noVNC
+          git clone https://github.com/novnc/websockify ~/noVNC/utils/websockify
+          nohup ~/noVNC/utils/launch.sh --vnc localhost:5901 --listen 6080 &
+          sleep 10
+          nohup ssh -o StrictHostKeyChecking=no -R 80:localhost:6080 serveo.net &
