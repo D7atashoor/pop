@@ -1,0 +1,72 @@
+name: Ubuntu Desktop with noVNC and localhost.run Tunnel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-desktop:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y xfce4 xfce4-goodies tightvncserver git curl wget openssh-client
+
+    - name: Setup VNC server with password from Secret
+      env:
+        VNC_PASSWORD: ${{ secrets.VNC_PASSWORD }}
+      run: |
+        if [ -z "$VNC_PASSWORD" ]; then
+          echo "::error:: VNC_PASSWORD secret is not set in GitHub repository settings."
+          exit 1
+        fi
+        mkdir -p ~/.vnc
+        echo "$VNC_PASSWORD" | vncpasswd -f > ~/.vnc/passwd
+        chmod 600 ~/.vnc/passwd
+        echo '#!/bin/bash
+        xrdb $HOME/.Xresources
+        startxfce4 &' > ~/.vnc/xstartup
+        chmod +x ~/.vnc/xstartup
+
+    - name: Start VNC and noVNC services
+      run: |
+        vncserver :1 -geometry 1280x720 -depth 24
+        git clone https://github.com/novnc/noVNC.git ~/noVNC
+        ~/noVNC/utils/launch.sh --vnc localhost:5901 --listen 6080 &
+
+    - name: Create tunnel with localhost.run
+      run: |
+        # إنشاء مفتاح SSH للاتصال بدون كلمة مرور
+        ssh-keygen -t rsa -N "" -f ~/.ssh/id_rsa
+        
+        # تشغيل النفق في الخلفية وحفظ المخرجات في ملف log
+        # قد يطلب منك الموافقة على بصمة المضيف، -o "StrictHostKeyChecking=no" تتولى ذلك
+        ssh -o "StrictHostKeyChecking=no" -R 80:localhost:6080 localhost.run > tunnel.log 2>&1 &
+        
+        # الانتظار قليلاً حتى يتم إنشاء النفق
+        sleep 10
+        
+        # استخراج الرابط العام من ملف الـ log
+        PUBLIC_URL=$(grep -o 'https://[a-zA-Z0-9-]*\.lhr\.life' tunnel.log)
+
+        if [ -z "$PUBLIC_URL" ]; then
+          echo "::error:: Failed to get public URL from localhost.run. The service might be down."
+          echo "Log content:"
+          cat tunnel.log
+          exit 1
+        fi
+        
+        echo "PUBLIC_URL=$PUBLIC_URL" >> $GITHUB_ENV
+
+    - name: Show connection info and keep alive
+      run: |
+        echo "------------------------------------------------------"
+        echo "✅ Ubuntu Desktop is running!"
+        echo "🌐 Public URL: ${{ env.PUBLIC_URL }}"
+        echo "🔑 VNC Password is the one you set in the VNC_PASSWORD secret."
+        echo "------------------------------------------------------"
+        echo "⚠️ WARNING: localhost.run can be unstable. If the URL doesn't work, the service may be down."
+        echo "ℹ️ This session will remain active for up to 6 hours."
+        
+        sleep 21000
