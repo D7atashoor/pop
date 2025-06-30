@@ -1,0 +1,82 @@
+name: Ubuntu Desktop with noVNC and Tunnel (Corrected)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-desktop:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y xfce4 xfce4-goodies tightvncserver git curl wget openssh-client
+
+    - name: Setup VNC server with password from Secret
+      env:
+        VNC_PASSWORD: ${{ secrets.VNC_PASSWORD }}
+      run: |
+        # التأكد من أن كلمة المرور تم إعدادها في الـ Secrets
+        if [ -z "$VNC_PASSWORD" ]; then
+          echo "Error: VNC_PASSWORD secret is not set in GitHub repository settings."
+          exit 1
+        fi
+        
+        # إعداد VNC
+        mkdir -p ~/.vnc
+        echo "$VNC_PASSWORD" | vncpasswd -f > ~/.vnc/passwd
+        chmod 600 ~/.vnc/passwd
+
+        echo '#!/bin/bash
+        xrdb $HOME/.Xresources
+        startxfce4 &' > ~/.vnc/xstartup
+        chmod +x ~/.vnc/xstartup
+
+    - name: Start VNC and noVNC services
+      run: |
+        # بدء خادم VNC في الخلفية
+        vncserver :1 -geometry 1280x720 -depth 24
+        
+        # استنساخ noVNC
+        git clone https://github.com/novnc/noVNC.git ~/noVNC
+        
+        # تشغيل خادم noVNC في الخلفية
+        ~/noVNC/utils/launch.sh --vnc localhost:5901 --listen 6080 &
+
+    - name: Create tunnel with serveo.net and get URL
+      id: tunnel # نعطي الخطوة معرفاً (ID) للوصول لمخرجاتها
+      run: |
+        # تشغيل النفق في الخلفية وحفظ المخرجات في ملف log
+        ssh -o StrictHostKeyChecking=no -R 80:localhost:6080 serveo.net > tunnel.log 2>&1 &
+        
+        # الانتظار لبضع ثوان حتى يتم إنشاء النفق
+        sleep 8
+        
+        # استخراج الرابط العام من ملف الـ log
+        # قد لا يعمل serveo.net دائماً، هذه الخطوة قد تفشل
+        PUBLIC_URL=$(grep -o 'https://[a-zA-Z0-9-]*\.serveo\.net' tunnel.log)
+        
+        if [ -z "$PUBLIC_URL" ]; then
+          echo "::error:: Failed to get public URL from serveo.net. The service might be down."
+          echo "Log content:"
+          cat tunnel.log
+          exit 1
+        fi
+        
+        # تصدير الرابط كمتغير بيئة للخطوات التالية
+        echo "PUBLIC_URL=$PUBLIC_URL" >> $GITHUB_ENV
+        echo "Tunnel is up at: $PUBLIC_URL"
+
+    - name: Show connection info and keep alive
+      run: |
+        echo "------------------------------------------------------"
+        echo "✅ Ubuntu Desktop is running!"
+        echo "🌐 Public URL: ${{ env.PUBLIC_URL }}"
+        echo "🔑 VNC Password is the one you set in the VNC_PASSWORD secret."
+        echo "------------------------------------------------------"
+        echo "⚠️ WARNING: serveo.net can be unstable. If the URL doesn't work, the service may be down."
+        echo "ℹ️ This session will remain active for up to 6 hours."
+        
+        # أمر لإبقاء الجلسة تعمل لأطول فترة ممكنة
+        sleep 21000
