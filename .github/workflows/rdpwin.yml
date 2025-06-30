@@ -1,0 +1,80 @@
+name: Ubuntu Desktop with noVNC and ngrok Tunnel (Reliable Version)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-desktop:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y xfce4 xfce4-goodies tightvncserver git curl wget jq
+
+    - name: Setup VNC server with password from Secret
+      env:
+        VNC_PASSWORD: ${{ secrets.VNC_PASSWORD }}
+      run: |
+        if [ -z "$VNC_PASSWORD" ]; then
+          echo "::error:: VNC_PASSWORD secret is not set in GitHub repository settings."
+          exit 1
+        fi
+        mkdir -p ~/.vnc
+        echo "$VNC_PASSWORD" | vncpasswd -f > ~/.vnc/passwd
+        chmod 600 ~/.vnc/passwd
+
+        echo '#!/bin/bash
+        xrdb $HOME/.Xresources
+        startxfce4 &' > ~/.vnc/xstartup
+        chmod +x ~/.vnc/xstartup
+
+    - name: Start VNC and noVNC services
+      run: |
+        vncserver :1 -geometry 1280x720 -depth 24
+        git clone https://github.com/novnc/noVNC.git ~/noVNC
+        ~/noVNC/utils/launch.sh --vnc localhost:5901 --listen 6080 &
+
+    - name: Create tunnel with ngrok
+      env:
+        NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
+      run: |
+        if [ -z "$NGROK_AUTHTOKEN" ]; then
+          echo "::error:: NGROK_AUTHTOKEN secret is not set. Get one from ngrok.com"
+          exit 1
+        fi
+        
+        # Download and setup ngrok
+        wget -q https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz
+        tar -xvzf ngrok-v3-stable-linux-amd64.tgz
+        
+        # Authenticate and start tunnel in the background
+        ./ngrok config add-authtoken $NGROK_AUTHTOKEN
+        ./ngrok http 6080 --log=stdout > ngrok.log &
+        
+        # Wait for ngrok to start
+        sleep 5
+        
+        # Get public URL from ngrok API and export it
+        PUBLIC_URL=$(curl -s http://127.0.0.1:4040/api/tunnels | jq -r .tunnels[0].public_url)
+        
+        if [ -z "$PUBLIC_URL" ] || [ "$PUBLIC_URL" = "null" ]; then
+            echo "::error:: Failed to get public URL from ngrok."
+            cat ngrok.log
+            exit 1
+        fi
+        
+        echo "PUBLIC_URL=$PUBLIC_URL" >> $GITHUB_ENV
+
+    - name: Show connection info and keep alive
+      run: |
+        echo "------------------------------------------------------"
+        echo "✅ Ubuntu Desktop is running!"
+        echo "🌐 Public URL: ${{ env.PUBLIC_URL }}"
+        echo "🔑 VNC Password is the one you set in the VNC_PASSWORD secret."
+        echo "------------------------------------------------------"
+        echo "ℹ️ This session will remain active for up to 6 hours."
+        
+        # Keep the workflow running
+        sleep 21000
