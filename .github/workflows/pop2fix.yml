@@ -1,0 +1,69 @@
+name: Ubuntu Desktop with noVNC and Cloudflare Tunnel (Final Corrected Version)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-desktop:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 1. Install Dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y xfce4 xfce4-goodies tightvncserver git curl wget net-tools
+
+    - name: 2. Setup VNC Server
+      env:
+        VNC_PASSWORD: ${{ secrets.VNC_PASSWORD }}
+      run: |
+        if [ -z "$VNC_PASSWORD" ]; then
+          echo "::error:: VNC_PASSWORD secret is not set."
+          exit 1
+        fi
+        mkdir -p ~/.vnc
+        echo "$VNC_PASSWORD" | vncpasswd -f > ~/.vnc/passwd
+        chmod 600 ~/.vnc/passwd
+        echo '#!/bin/bash
+        xrdb $HOME/.Xresources
+        startxfce4 &' > ~/.vnc/xstartup
+        chmod +x ~/.vnc/xstartup
+        vncserver :1 -geometry 1280x720 -depth 24
+
+    - name: 3. Download noVNC
+      run: |
+        # سيتم تنفيذ هذه الخطوة بالكامل قبل الانتقال إلى الخطوة 4
+        git clone https://github.com/novnc/noVNC.git ~/noVNC
+
+    - name: 4. Start noVNC and Check Services
+      run: |
+        # الآن نحن متأكدون 100% أن الملف موجود
+        ~/noVNC/utils/launch.sh --vnc localhost:5901 --listen 6080 &
+        sleep 5
+        echo "--- Checking listening ports... ---"
+        ss -tulpn | grep '5901\|6080' || (echo "::error:: VNC or noVNC services failed to start." && exit 1)
+
+    - name: 5. Create Tunnel with Cloudflare
+      run: |
+        wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+        mv cloudflared-linux-amd64 cloudflared
+        chmod +x cloudflared
+        ./cloudflared tunnel --url http://localhost:6080 > tunnel.log 2>&1 &
+        sleep 10
+        PUBLIC_URL=$(grep -o 'https://.*\.trycloudflare.com' tunnel.log)
+        if [ -z "$PUBLIC_URL" ]; then
+            echo "::error:: Failed to get public URL from Cloudflare."
+            cat tunnel.log
+            exit 1
+        fi
+        echo "PUBLIC_URL=$PUBLIC_URL" >> $GITHUB_ENV
+
+    - name: 6. Show Connection Info and Keep Alive
+      run: |
+        echo "------------------------------------------------------"
+        echo "✅ Ubuntu Desktop is running!"
+        echo "🌐 Public URL: ${{ env.PUBLIC_URL }}"
+        echo "🔑 VNC Password is the one you set in the VNC_PASSWORD secret."
+        echo "------------------------------------------------------"
+        echo "ℹ️ This session will remain active for up to 6 hours."
+        sleep 21000
