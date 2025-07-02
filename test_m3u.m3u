@@ -1,0 +1,7 @@
+#EXTM3U
+#EXTINF:-1 tvg-id="1" tvg-name="Test Channel 1" tvg-logo="https://example.com/logo1.png" group-title="Test",Test Channel 1
+https://example.com/stream1.m3u8
+#EXTINF:-1 tvg-id="2" tvg-name="Test Channel 2" tvg-logo="https://example.com/logo2.png" group-title="Test",Test Channel 2  
+https://example.com/stream2.m3u8
+#EXTINF:-1 tvg-id="3" tvg-name="Test Sports" tvg-logo="https://example.com/sports.png" group-title="Sports",Test Sports
+https://example.com/sports.m3u8

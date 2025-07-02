@@ -1,6 +1,7 @@
 package com.iptv.player.data.network
 
 import com.iptv.player.data.model.Channel
+import android.util.Log
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.URL
@@ -12,6 +13,7 @@ import javax.inject.Singleton
 class M3UParser @Inject constructor() {
     
     companion object {
+        private const val TAG = "M3UParser"
         private const val EXTINF_TAG = "#EXTINF:"
         private const val EXTM3U_TAG = "#EXTM3U"
         private const val EXT_X_VERSION_TAG = "#EXT-X-VERSION"
@@ -45,6 +47,8 @@ class M3UParser @Inject constructor() {
      */
     suspend fun parseFromContent(content: String, sourceId: Long): ParseResult {
         return try {
+            Log.d(TAG, "بدء تحليل M3U من المحتوى")
+            
             val lines = content.lines()
             val channels = mutableListOf<Channel>()
             val statistics = M3UStatistics()
@@ -99,22 +103,34 @@ class M3UParser @Inject constructor() {
             statistics.totalChannels = channels.size
             statistics.totalLines = lineNumber
             
+            Log.d(TAG, "تم تحليل M3U بنجاح: ${channels.size} قناة")
             ParseResult.Success(channels, statistics)
             
         } catch (e: Exception) {
-            ParseResult.Error("خطأ في تحليل M3U: ${e.message}")
+            Log.e(TAG, "خطأ في تحليل M3U من المحتوى", e)
+            ParseResult.Error("خطأ في تحليل M3U: ${e.localizedMessage ?: e.message}")
         }
     }
     
     /**
-     * تحليل M3U من URL
+     * تحليل M3U من URL - مع معالجة محسنة للأخطاء
      */
     suspend fun parseFromUrl(url: String, sourceId: Long): ParseResult {
         return try {
+            Log.d(TAG, "بدء تحليل M3U من URL: $url")
+            
             val content = downloadM3UContent(url)
+            if (content.isBlank()) {
+                Log.e(TAG, "المحتوى فارغ من URL: $url")
+                return ParseResult.Error("المحتوى فارغ أو لا يمكن الوصول إليه")
+            }
+            
+            Log.d(TAG, "تم تحميل المحتوى بنجاح، البدء في التحليل...")
             parseFromContent(content, sourceId)
+            
         } catch (e: Exception) {
-            ParseResult.Error("خطأ في تحميل M3U من URL: ${e.message}")
+            Log.e(TAG, "خطأ في تحليل M3U من URL: $url", e)
+            ParseResult.Error("خطأ في تحميل M3U من URL: ${e.localizedMessage ?: e.message}")
         }
     }
     
@@ -212,13 +228,13 @@ class M3UParser @Inject constructor() {
      * التحقق من صحة رابط البث
      */
     private fun isValidStreamUrl(url: String): Boolean {
-        return url.startsWith("http://") || 
-               url.startsWith("https://") || 
-               url.startsWith("udp://") || 
-               url.startsWith("rtp://") || 
-               url.startsWith("rtsp://") ||
-               url.startsWith("rtmp://") ||
-               url.startsWith("file://")
+        return url.startsWith("http://", ignoreCase = true) || 
+               url.startsWith("https://", ignoreCase = true) || 
+               url.startsWith("udp://", ignoreCase = true) || 
+               url.startsWith("rtp://", ignoreCase = true) || 
+               url.startsWith("rtsp://", ignoreCase = true) ||
+               url.startsWith("rtmp://", ignoreCase = true) ||
+               url.startsWith("file://", ignoreCase = true)
     }
     
     /**
@@ -267,20 +283,34 @@ class M3UParser @Inject constructor() {
     }
     
     /**
-     * تحميل محتوى M3U من URL
+     * تحميل محتوى M3U من URL - مع معالجة أفضل للأخطاء
      */
     private suspend fun downloadM3UContent(url: String): String {
         return try {
+            Log.d(TAG, "تحميل M3U من: $url")
+            
             val connection = URL(url).openConnection()
-            connection.connectTimeout = 10000
+            connection.connectTimeout = 15000
             connection.readTimeout = 30000
             connection.setRequestProperty("User-Agent", "IPTV Player/1.0")
+            connection.setRequestProperty("Accept", "*/*")
             
             BufferedReader(InputStreamReader(connection.getInputStream())).use { reader ->
-                reader.readText()
+                val content = reader.readText()
+                Log.d(TAG, "تم تحميل ${content.length} حرف من المحتوى")
+                
+                // تحقق أساسي من المحتوى
+                if (content.contains("#EXTM3U") || content.contains("http")) {
+                    content
+                } else {
+                    Log.w(TAG, "المحتوى لا يبدو كملف M3U صالح")
+                    content // أعد المحتوى على أي حال للمحاولة
+                }
             }
+            
         } catch (e: Exception) {
-            throw Exception("فشل في تحميل M3U: ${e.message}")
+            Log.e(TAG, "خطأ في تحميل M3U", e)
+            throw Exception("فشل في تحميل M3U: ${e.localizedMessage ?: e.message}")
         }
     }
     
