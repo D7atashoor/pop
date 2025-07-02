@@ -15,6 +15,8 @@ import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 import javax.inject.Inject
 import javax.inject.Singleton
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 @Singleton
 class SourceValidationService @Inject constructor(
@@ -538,38 +540,36 @@ class SourceValidationService @Inject constructor(
         password: String,
         serverInfo: ServerInfo?
     ): SourceValidationResult {
-        Log.d(TAG, "بدء التحقق المحسن من Xtream Codes")
+        Log.d(TAG, "بدء التحقق المتقدم من Xtream Codes")
         val issues = mutableListOf<String>()
         val warnings = mutableListOf<String>()
         
         try {
-            // استخدام XtreamService للتحقق من المصدر
-            val (isValid, message) = xtreamService.validateXtreamSource(url, username, password)
+            val result = xtreamService.validateSource(url, username, password)
             
-            if (isValid) {
-                Log.d(TAG, "تم التحقق من Xtream بنجاح: $message")
+            if (result.isValid) {
+                Log.d(TAG, "تم التحقق من Xtream بنجاح عبر ${result.endpoint ?: "M3U Link"}")
                 
-                // محاولة الحصول على معلومات إضافية من player_api
-                val cleanUrl = xtreamService.cleanXtreamUrl(url)
-                val playerApiUrl = "$cleanUrl/player_api.php?username=$username&password=$password"
-                val accountInfo = try {
-                    xtreamService.getAccountInfo(playerApiUrl)
-                } catch (e: Exception) {
-                    Log.w(TAG, "لم يتم العثور على معلومات الحساب")
-                    null
-                }
+                val accountInfo = AccountInfo(
+                    username = username,
+                    status = result.status,
+                    expiryDate = result.expiryDate,
+                    isActive = result.status?.equals("Active", ignoreCase = true) ?: true,
+                    maxConnections = result.maxConnections,
+                    activeConnections = result.activeConnections
+                )
                 
-                val statistics = try {
-                    val categories = xtreamService.getLiveCategories(playerApiUrl)
-                    SourceStatistics(
-                        sourceId = 0L,
-                        totalCategories = categories.size,
-                        liveChannels = categories.sumOf { it.count }, // تقدير
-                        lastUpdated = System.currentTimeMillis()
-                    )
-                } catch (e: Exception) {
-                    Log.w(TAG, "لم يتم العثور على إحصائيات")
-                    null
+                // إضافة تحذير إذا كان الحساب سينتهي قريباً
+                result.expiryDate?.let {
+                    try {
+                        val date = SimpleDateFormat("dd-MM-yyyy HH:mm", Locale.getDefault()).parse(it)
+                        if (date != null) {
+                            val daysLeft = TimeUnit.MILLISECONDS.toDays(date.time - System.currentTimeMillis())
+                            if (daysLeft in 0..7) {
+                                warnings.add("⚠️ الحساب سينتهي خلال $daysLeft أيام")
+                            }
+                        }
+                    } catch (e: Exception) { /* تجاهل أخطاء التنسيق */ }
                 }
                 
                 return SourceValidationResult(
@@ -577,14 +577,13 @@ class SourceValidationService @Inject constructor(
                     sourceType = SourceType.XTREAM,
                     issues = issues,
                     warnings = warnings,
-                    serverInfo = serverInfo,
+                    serverInfo = serverInfo?.copy(host = result.realUrl ?: serverInfo.host, timezone = result.timezone),
                     accountInfo = accountInfo,
-                    statistics = statistics,
                     detectedUserAgent = "Xtream Codes Player"
                 )
             } else {
                 Log.e(TAG, "فشل التحقق من Xtream")
-                issues.add("فشل التحقق من Xtream: لا توجد صيغة صالحة")
+                issues.add("فشل التحقق من Xtream: لا توجد صيغة أو endpoint صالح")
                 return SourceValidationResult(false, SourceType.XTREAM, issues, serverInfo = serverInfo)
             }
             
