@@ -538,14 +538,61 @@ class SourceValidationService @Inject constructor(
         password: String,
         serverInfo: ServerInfo?
     ): SourceValidationResult {
-        Log.d(TAG, "تحقق محسن من Xtream")
-        return SourceValidationResult(
-            isValid = true,
-            sourceType = SourceType.XTREAM,
-            issues = emptyList(),
-            warnings = listOf("تم قبول المصدر بدون تحقق كامل (وضع التطوير)"),
-            serverInfo = serverInfo
-        )
+        Log.d(TAG, "بدء التحقق المحسن من Xtream Codes")
+        val issues = mutableListOf<String>()
+        val warnings = mutableListOf<String>()
+        
+        try {
+            // استخدام XtreamService للتحقق من المصدر
+            val (isValid, message) = xtreamService.validateXtreamSource(url, username, password)
+            
+            if (isValid) {
+                Log.d(TAG, "تم التحقق من Xtream بنجاح: $message")
+                
+                // محاولة الحصول على معلومات إضافية من player_api
+                val cleanUrl = xtreamService.cleanXtreamUrl(url)
+                val playerApiUrl = "$cleanUrl/player_api.php?username=$username&password=$password"
+                val accountInfo = try {
+                    xtreamService.getAccountInfo(playerApiUrl)
+                } catch (e: Exception) {
+                    Log.w(TAG, "لم يتم العثور على معلومات الحساب")
+                    null
+                }
+                
+                val statistics = try {
+                    val categories = xtreamService.getLiveCategories(playerApiUrl)
+                    SourceStatistics(
+                        sourceId = 0L,
+                        totalCategories = categories.size,
+                        liveChannels = categories.sumOf { it.count }, // تقدير
+                        lastUpdated = System.currentTimeMillis()
+                    )
+                } catch (e: Exception) {
+                    Log.w(TAG, "لم يتم العثور على إحصائيات")
+                    null
+                }
+                
+                return SourceValidationResult(
+                    isValid = true,
+                    sourceType = SourceType.XTREAM,
+                    issues = issues,
+                    warnings = warnings,
+                    serverInfo = serverInfo,
+                    accountInfo = accountInfo,
+                    statistics = statistics,
+                    detectedUserAgent = "Xtream Codes Player"
+                )
+            } else {
+                Log.e(TAG, "فشل التحقق من Xtream")
+                issues.add("فشل التحقق من Xtream: لا توجد صيغة صالحة")
+                return SourceValidationResult(false, SourceType.XTREAM, issues, serverInfo = serverInfo)
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "خطأ في التحقق من Xtream", e)
+            issues.add("خطأ في التحقق: ${e.localizedMessage}")
+            return SourceValidationResult(false, SourceType.XTREAM, issues, serverInfo = serverInfo)
+        }
     }
     
     private suspend fun validateM3USourceAdvanced(
