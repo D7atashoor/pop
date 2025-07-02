@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">IPTV Player</string>
+    <string name="welcome_message">مرحباً بك في مشغل IPTV</string>
+    <string name="add_sources_instruction">قم بإضافة مصادر البث المباشر للبدء</string>
+    <string name="sources">المصادر</string>
+    <string name="channels">القنوات</string>
+    <string name="movies">الأفلام</string>
+    <string name="series">المسلسلات</string>
+    <string name="settings">الإعدادات</string>
+    <string name="about">حول التطبيق</string>
+    <string name="add_source">إضافة مصدر</string>
+    <string name="source_name">اسم المصدر</string>
+    <string name="source_type">نوع المصدر</string>
+    <string name="source_url">رابط المصدر</string>
+    <string name="username">اسم المستخدم</string>
+    <string name="password">كلمة المرور</string>
+    <string name="mac_address">عنوان MAC</string>
+    <string name="portal_url">رابط البوابة</string>
+    <string name="server_url">رابط الخادم</string>
+    <string name="serial_number">الرقم التسلسلي</string>
+    <string name="save">حفظ</string>
+    <string name="cancel">إلغاء</string>
+    <string name="delete">حذف</string>
+    <string name="confirm_delete">تأكيد الحذف</string>
+    <string name="delete_source_message">هل أنت متأكد من حذف هذا المصدر؟</string>
+    <string name="no_sources">لا توجد مصادر</string>
+    <string name="no_sources_message">قم بإضافة مصدر للبدء في مشاهدة القنوات</string>
+    <string name="no_channels">لا توجد قنوات</string>
+    <string name="no_channels_message">قم بإضافة مصادر لعرض القنوات هنا</string>
+    <string name="statistics">الإحصائيات</string>
+    <string name="sources_added">المصادر المضافة:</string>
+    <string name="active_sources">المصادر النشطة:</string>
+    <string name="loading">جاري التحميل...</string>
+    <string name="error_occurred">حدث خطأ</string>
+    <string name="connection_error">خطأ في الاتصال</string>
+    <string name="invalid_url">رابط غير صحيح</string>
+    <string name="required_fields">يرجى ملء جميع الحقول المطلوبة</string>
+    <string name="back">رجوع</string>
+    <string name="optional">اختياري</string>
+</resources>
