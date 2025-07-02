@@ -18,6 +18,9 @@ android {
 }
 
 dependencies {
-    implementation(project(":core-network"))
+    // No dependency on core-network to avoid cycles; network layer depends on data models instead.
+
+    // Kotlin Coroutines
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
     // Additional data dependencies such as Room or Datastore can be added later
 }
