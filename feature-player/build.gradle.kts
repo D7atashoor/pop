@@ -35,4 +35,8 @@ dependencies {
 
     // ExoPlayer
     implementation("com.google.android.exoplayer:exoplayer:2.19.1")
+    implementation("com.google.android.exoplayer:exoplayer-ui:2.19.1")
+    implementation("com.google.android.exoplayer:extension-leanback:2.19.1")
+
+    implementation("androidx.compose.material:material-icons-extended")
 }
