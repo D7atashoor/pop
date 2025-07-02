@@ -250,7 +250,10 @@ data class SourceValidationResult(
     val warnings: List<String> = emptyList(),
     val statistics: SourceStatistics? = null,
     val serverInfo: ServerInfo? = null,
-    val accountInfo: AccountInfo? = null
+    val accountInfo: AccountInfo? = null,
+    val detectedPortalPath: String? = null,
+    val detectedUserAgent: String? = null,
+    val responseTime: Long? = null
 )
 
 data class SearchFilter(
