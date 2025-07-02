@@ -2,6 +2,7 @@
     package="com.example.iptvhost.tv">
 
     <application
+        android:name="com.example.iptvhost.coreui.IPTVHostApp"
         android:label="IPTV Host TV"
         android:banner="@mipmap/ic_tv_banner"
         android:icon="@mipmap/ic_launcher_round">
