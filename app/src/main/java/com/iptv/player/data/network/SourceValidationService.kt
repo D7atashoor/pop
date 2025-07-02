@@ -407,47 +407,41 @@ class SourceValidationService @Inject constructor(
         portalPath: String?,
         serverInfo: ServerInfo?
     ): SourceValidationResult {
+        Log.d(TAG, "بدء التحقق المتقدم من Stalker Portal")
         val issues = mutableListOf<String>()
         val warnings = mutableListOf<String>()
         
         try {
-            Log.d(TAG, "بدء التحقق المحسن من Stalker")
+            val result = stalkerService.validateSourceAdvanced(url, macAddress)
             
-            // اكتشاف أفضل portal endpoint
-            val detectedEndpoint = discoverStalkerEndpoint(url)
-            Log.d(TAG, "تم اكتشاف endpoint: $detectedEndpoint")
-            
-            // اختبار الاتصال
-            val connectionTest = testStalkerConnection(url, macAddress, detectedEndpoint)
-            
-            if (connectionTest.isSuccessful) {
-                Log.d(TAG, "نجح اختبار Stalker connection")
+            if (result.isValid) {
+                Log.d(TAG, "تم التحقق من Stalker بنجاح عبر ${result.portalUrl}")
+                
+                val accountInfo = AccountInfo(
+                    status = result.status,
+                    expiryDate = result.expiryDate,
+                    isActive = result.status?.equals("Active", ignoreCase = true) ?: true
+                )
                 
                 return SourceValidationResult(
                     isValid = true,
                     sourceType = SourceType.STALKER,
                     issues = issues,
                     warnings = warnings,
-                    serverInfo = serverInfo,
-                    detectedPortalPath = detectedEndpoint
+                    serverInfo = serverInfo?.copy(timezone = result.timezone),
+                    accountInfo = accountInfo,
+                    detectedPortalPath = result.portalUrl
                 )
             } else {
-                Log.e(TAG, "فشل اختبار Stalker connection: ${connectionTest.errorMessage}")
-                issues.add("فشل في الاتصال: ${connectionTest.errorMessage}")
-                
-                return SourceValidationResult(
-                    isValid = false,
-                    sourceType = SourceType.STALKER,
-                    issues = issues,
-                    warnings = warnings,
-                    serverInfo = serverInfo
-                )
+                Log.e(TAG, "فشل التحقق من Stalker: ${result.error}")
+                issues.add("فشل التحقق من Stalker: ${result.error}")
+                return SourceValidationResult(false, SourceType.STALKER, issues, serverInfo = serverInfo)
             }
             
         } catch (e: Exception) {
             Log.e(TAG, "خطأ في التحقق من Stalker", e)
             issues.add("خطأ في التحقق: ${e.localizedMessage}")
-            return SourceValidationResult(false, SourceType.STALKER, issues)
+            return SourceValidationResult(false, SourceType.STALKER, issues, serverInfo = serverInfo)
         }
     }
     
@@ -670,8 +664,8 @@ class SourceValidationService @Inject constructor(
         portalPath: String?,
         serverInfo: ServerInfo?
     ): SourceValidationResult {
-        Log.d(TAG, "تحقق محسن من MAC Portal")
-        return validateStalkerSourceAdvanced(url, macAddress, portalPath ?: "/portal.php", serverInfo)
+        Log.d(TAG, "التحقق من MAC Portal باستخدام منطق Stalker المتقدم")
+        return validateStalkerSourceAdvanced(url, macAddress, portalPath, serverInfo)
     }
     
     private suspend fun testUrlAccess(url: String): Boolean {

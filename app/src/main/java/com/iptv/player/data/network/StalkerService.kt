@@ -1,13 +1,24 @@
 package com.iptv.player.data.network
 
-import com.iptv.player.data.model.Channel
-import retrofit2.Response
-import retrofit2.http.Field
-import retrofit2.http.FormUrlEncoded
-import retrofit2.http.POST
-import retrofit2.http.Query
+import android.util.Log
+import com.google.gson.Gson
+import com.iptv.player.data.model.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.*
+import org.json.JSONObject
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import retrofit2.http.GET
+import retrofit2.http.Header
+import retrofit2.http.Url
+import java.net.URL
 import java.security.MessageDigest
 import java.util.*
+import java.util.concurrent.TimeUnit
+import java.util.regex.Pattern
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.random.Random
@@ -544,6 +555,161 @@ class StalkerService @Inject constructor(
     private var authorization: String? = null
     private var macAddress: String? = null
     
+    private val httpClient = OkHttpClient.Builder()
+        .cookieJar(JavaNetCookieJar(java.net.CookieManager()))
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .build()
+
+    /**
+     * التحقق المتقدم من صحة مصدر Stalker/MAC Portal.
+     */
+    suspend fun validateSourceAdvanced(
+        url: String,
+        macAddress: String
+    ): StalkerValidationDetails = withContext(Dispatchers.IO) {
+        val normalizedMac = normalizeMacAddress(macAddress)
+        if (normalizedMac == null) {
+            Log.e(TAG, "عنوان MAC غير صالح: $macAddress")
+            return@withContext StalkerValidationDetails(isValid = false, error = "Invalid MAC Address")
+        }
+
+        val baseUrl = getBaseUrl(url)
+        val host = URL(baseUrl).host
+        val port = URL(baseUrl).port
+
+        val portalEndpoints = listOf(
+            "$baseUrl/portal.php",
+            "$baseUrl/stalker_portal/server/load.php",
+            "$baseUrl/c/"
+        )
+
+        for (attempt in 1..2) { // Retry logic
+            for (portalUrl in portalEndpoints) {
+                try {
+                    val result = checkStalkerPortal(portalUrl, normalizedMac, host, port)
+                    if (result.isValid) {
+                        return@withContext result
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "فشل التحقق من $portalUrl في المحاولة $attempt", e)
+                }
+            }
+            if (attempt == 1) {
+                delay(1000) // انتظر قبل إعادة المحاولة
+            }
+        }
+
+        return@withContext StalkerValidationDetails(isValid = false, error = "Failed to validate with all endpoints")
+    }
+
+    private suspend fun checkStalkerPortal(
+        portalBaseUrl: String,
+        mac: String,
+        host: String,
+        port: Int
+    ): StalkerValidationDetails {
+        val session = OkHttpClient.Builder()
+            .cookieJar(JavaNetCookieJar(java.net.CookieManager()))
+            .connectTimeout(10, TimeUnit.SECONDS).build()
+
+        // 1. Handshake
+        val handshakeUrl = "$portalBaseUrl?type=stb&action=handshake&token=&JsHttpRequest=1-xml"
+        val handshakeHeaders = buildStalkerHeaders(mac, host, port, portalBaseUrl)
+        
+        val handshakeResponse = executeRequest(session, handshakeUrl, handshakeHeaders)
+        val token = parseToken(handshakeResponse) ?: return StalkerValidationDetails(isValid = false)
+        Log.d(TAG, "Handshake successful for $portalBaseUrl, token received.")
+
+        // 2. Get Profile
+        val profileUrl = "$portalBaseUrl?type=stb&action=get_profile&JsHttpRequest=1-xml"
+        val authHeaders = handshakeHeaders.newBuilder().add("Authorization", "Bearer $token").build()
+        val profileResponse = executeRequest(session, profileUrl, authHeaders)
+        val timezone = parseTimezone(profileResponse)
+        Log.d(TAG, "Profile data received, timezone: $timezone")
+
+        // 3. Get Account Info
+        val accountUrl = "$portalBaseUrl?type=account_info&action=get_main_info&JsHttpRequest=1-xml"
+        val accountResponse = executeRequest(session, accountUrl, authHeaders)
+        return parseAccountInfo(accountResponse, portalBaseUrl, timezone)
+    }
+
+    private suspend fun executeRequest(session: OkHttpClient, url: String, headers: Headers): String? {
+        return withTimeoutOrNull(10000) {
+            val request = Request.Builder().url(url).headers(headers).build()
+            session.newCall(request).execute().body?.string()
+        }
+    }
+    
+    private fun parseToken(response: String?): String? {
+        return response?.let {
+            try {
+                JSONObject(it).getJSONObject("js").getString("token")
+            } catch (e: Exception) { null }
+        }
+    }
+
+    private fun parseTimezone(response: String?): String? {
+        return response?.let {
+            try {
+                JSONObject(it).getJSONObject("js").getString("default_timezone")
+            } catch (e: Exception) { null }
+        }
+    }
+
+    private fun parseAccountInfo(response: String?, portalUrl: String, timezone: String?): StalkerValidationDetails {
+        if (response == null || !response.contains("\"js\":{\"mac\"")) {
+            return StalkerValidationDetails(isValid = false, error = "Invalid account info response")
+        }
+        try {
+            val js = JSONObject(response).getJSONObject("js")
+            val status = js.optString("status", js.optString("account_status", "Active"))
+            
+            return StalkerValidationDetails(
+                isValid = true,
+                portalUrl = portalUrl,
+                macAddress = js.getString("mac"),
+                expiryDate = js.optString("phone", js.optString("exp_date", "N/A")),
+                status = status,
+                timezone = timezone
+            )
+        } catch (e: Exception) {
+            return StalkerValidationDetails(isValid = false, error = "Failed to parse account info")
+        }
+    }
+    
+    fun normalizeMacAddress(mac: String): String? {
+        val cleanMac = mac.uppercase(Locale.ROOT).replace(Regex("[^0-9A-F:]"), "")
+        val hexChars = cleanMac.replace(":", "")
+        
+        if (hexChars.length < 12) return null // Not enough characters
+        val finalHex = hexChars.substring(0, 12)
+        
+        return (0 until 12 step 2).joinToString(":") { finalHex.substring(it, it + 2) }
+    }
+    
+    private fun getBaseUrl(url: String): String {
+        var server = url.trim().let { if (it.endsWith('/')) it.dropLast(1) else it }
+        if (!server.startsWith("http")) {
+            server = "http://$server"
+        }
+        return server
+    }
+
+    private fun buildStalkerHeaders(mac: String, host: String, port: Int, refererUrl: String): Headers {
+        return Headers.Builder()
+            .add("User-Agent", "Lavf53.32.100")
+            .add("Pragma", "no-cache")
+            .add("Accept", "*/*")
+            .add("Referer", "$refererUrl/c/index.html")
+            .add("X-User-Agent", "Model: MAG250; Link: WiFi")
+            .add("Host", "$host:$port")
+            .add("Cookie", "mac=$mac; stb_lang=en; timezone=Europe/Paris")
+            .add("Connection", "Close")
+            .add("Accept-Encoding", "gzip, deflate")
+            .build()
+    }
+    
     /**
      * توليد عنوان MAC عشوائي مع prefix محدد
      */
@@ -896,4 +1062,14 @@ data class DeviceCredentials(
     val deviceId2: String,
     val signature: String,
     val stbType: String
+)
+
+data class StalkerValidationDetails(
+    val isValid: Boolean,
+    val portalUrl: String? = null,
+    val macAddress: String? = null,
+    val expiryDate: String? = null,
+    val status: String? = null,
+    val timezone: String? = null,
+    val error: String? = null
 )
