@@ -40,7 +40,7 @@ fun ChannelsScreen(
             verticalArrangement = Arrangement.Center
         ) {
             Icon(
-                imageVector = Icons.Default.Tv,
+                imageVector = Icons.Default.LiveTv,
                 contentDescription = null,
                 modifier = Modifier.size(72.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant

@@ -91,7 +91,7 @@ fun EmptySourcesContent(
         verticalArrangement = Arrangement.Center
     ) {
         Icon(
-            imageVector = Icons.Default.Source,
+            imageVector = Icons.Default.Storage,
             contentDescription = null,
             modifier = Modifier.size(72.dp),
             tint = MaterialTheme.colorScheme.onSurfaceVariant

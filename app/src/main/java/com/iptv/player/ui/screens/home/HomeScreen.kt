@@ -176,12 +176,12 @@ private fun getMenuItems(): List<MenuItem> {
     return listOf(
         MenuItem(
             title = "المصادر",
-            icon = Icons.Default.Source,
+            icon = Icons.Default.Storage,
             route = Screen.Sources.route
         ),
         MenuItem(
             title = "القنوات",
-            icon = Icons.Default.Tv,
+            icon = Icons.Default.LiveTv,
             route = Screen.Channels.route
         ),
         MenuItem(
