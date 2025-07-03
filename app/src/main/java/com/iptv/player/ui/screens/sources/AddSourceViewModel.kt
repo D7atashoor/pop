@@ -1,23 +1,34 @@
 package com.iptv.player.ui.screens.sources
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.iptv.player.data.model.*
 import com.iptv.player.data.network.SourceValidationService
 import com.iptv.player.data.repository.SourceRepository
+import com.iptv.player.data.network.StalkerService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import javax.inject.Inject
 
 @HiltViewModel
 class AddSourceViewModel @Inject constructor(
     private val sourceRepository: SourceRepository,
-    private val validationService: SourceValidationService
+    private val validationService: SourceValidationService,
+    private val stalkerService: StalkerService
 ) : ViewModel() {
+    
+    companion object {
+        private const val TAG = "AddSourceViewModel"
+    }
     
     private val _uiState = MutableStateFlow(AddSourceUiState())
     val uiState: StateFlow<AddSourceUiState> = _uiState.asStateFlow()
+    
+    private val _validationMessage = MutableStateFlow<String?>(null)
+    val validationMessage: StateFlow<String?> = _validationMessage.asStateFlow()
     
     fun updateName(name: String) {
         _uiState.value = _uiState.value.copy(name = name)
@@ -137,49 +148,252 @@ class AddSourceViewModel @Inject constructor(
         }
     }
     
-    fun generateMACAddress() {
-        val generatedMAC = validationService.generateMACAddress()
-        _uiState.value = _uiState.value.copy(
-            macAddress = generatedMAC,
-            message = "تم توليد عنوان MAC جديد"
-        )
-    }
-    
-    fun validateSource() {
-        val currentState = _uiState.value
-        
-        if (currentState.url.isBlank()) {
-            _uiState.value = currentState.copy(error = "يرجى إدخال رابط")
-            return
-        }
-        
+    fun generateMAC() {
         viewModelScope.launch {
-            _uiState.value = currentState.copy(isValidating = true, error = null, validationResult = null)
-            
             try {
-                val result = validationService.validateSource(
-                    sourceType = currentState.selectedType,
-                    url = currentState.url,
-                    username = currentState.username.takeIf { it.isNotBlank() },
-                    password = currentState.password.takeIf { it.isNotBlank() },
-                    macAddress = currentState.macAddress.takeIf { it.isNotBlank() },
-                    portalPath = currentState.portalPath.takeIf { it.isNotBlank() }
+                Log.d(TAG, "بدء توليد MAC address جديد")
+                
+                // استخدام المعرف الشائع للأجهزة المختلفة
+                val availablePrefixes = StalkerService.MAC_PREFIXES
+                val selectedPrefix = availablePrefixes.random()
+                
+                val newMac = stalkerService.generateMACAddress(selectedPrefix)
+                
+                // الحصول على معلومات إضافية عن الجهاز
+                val deviceCredentials = stalkerService.generateDeviceCredentials(newMac)
+                val deviceModel = deviceCredentials["device_model"] ?: "MAG254"
+                val userAgent = deviceCredentials["user_agent"] ?: ""
+                
+                Log.d(TAG, "تم توليد MAC: $newMac للجهاز: $deviceModel")
+                
+                _uiState.value = _uiState.value.copy(
+                    macAddress = newMac,
+                    userAgent = userAgent,
+                    selectedDeviceModel = deviceModel,
+                    deviceCredentials = deviceCredentials
                 )
                 
-                _uiState.value = currentState.copy(
-                    isValidating = false,
-                    validationResult = result,
-                    message = if (result.isValid) "تم التحقق بنجاح!" else null,
-                    error = if (!result.isValid) result.issues.firstOrNull() else null
-                )
+                // إظهار معلومات عن الجهاز
+                _validationMessage.value = "تم توليد MAC للجهاز: $deviceModel"
                 
             } catch (e: Exception) {
-                _uiState.value = currentState.copy(
-                    isValidating = false,
-                    error = "خطأ في التحقق: ${e.message}"
-                )
+                Log.e(TAG, "خطأ في توليد MAC", e)
+                _validationMessage.value = "خطأ في توليد MAC: ${e.localizedMessage}"
             }
         }
+    }
+    
+    fun selectDeviceModel(deviceModel: String) {
+        viewModelScope.launch {
+            try {
+                Log.d(TAG, "اختيار نموذج الجهاز: $deviceModel")
+                
+                // البحث عن MAC prefix مناسب لهذا الجهاز
+                val matchingPrefix = StalkerService.DEVICE_MODELS.entries
+                    .firstOrNull { it.value == deviceModel }?.key
+                    ?: StalkerService.MAC_PREFIXES.first()
+                
+                val newMac = stalkerService.generateMACAddress(matchingPrefix)
+                val deviceCredentials = stalkerService.generateDeviceCredentials(newMac)
+                
+                _uiState.value = _uiState.value.copy(
+                    macAddress = newMac,
+                    userAgent = deviceCredentials["user_agent"] ?: "",
+                    selectedDeviceModel = deviceModel,
+                    deviceCredentials = deviceCredentials
+                )
+                
+                // إظهار قدرات الجهاز
+                val capabilities = stalkerService.getDeviceCapabilities(deviceModel)
+                val capabilitiesText = capabilities?.let { caps ->
+                    val features = mutableListOf<String>()
+                    if (caps["supports_4k"] == true) features.add("4K")
+                    if (caps["supports_hevc"] == true) features.add("HEVC")
+                    if (caps["supports_hdr"] == true) features.add("HDR")
+                    if (features.isNotEmpty()) "يدعم: ${features.joinToString(", ")}" else "دقة 1080p"
+                } ?: "معلومات غير متوفرة"
+                
+                _validationMessage.value = "تم اختيار $deviceModel - $capabilitiesText"
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "خطأ في اختيار نموذج الجهاز", e)
+                _validationMessage.value = "خطأ في اختيار الجهاز: ${e.localizedMessage}"
+            }
+        }
+    }
+    
+    fun validateSourceSmart() {
+        if (_uiState.value.isValidating) return
+        
+        viewModelScope.launch {
+            try {
+                _uiState.value = _uiState.value.copy(isValidating = true)
+                _validationMessage.value = "جاري التحقق الذكي من المصدر..."
+                
+                val currentState = _uiState.value
+                val url = currentState.url.trim()
+                
+                if (url.isEmpty()) {
+                    _validationMessage.value = "يرجى إدخال رابط المصدر"
+                    return@launch
+                }
+                
+                Log.d(TAG, "بدء التحقق الذكي: $url")
+                
+                // اكتشاف نوع المصدر تلقائياً
+                val detectedType = validationService.detectSourceType(url)
+                Log.d(TAG, "نوع المصدر المكتشف: $detectedType")
+                
+                if (detectedType == null) {
+                    _validationMessage.value = "لا يمكن تحديد نوع المصدر"
+                    return@launch
+                }
+                
+                // تحديث نوع المصدر المكتشف
+                _uiState.value = _uiState.value.copy(
+                    sourceType = detectedType,
+                    detectedSourceType = detectedType
+                )
+                
+                // التحقق حسب النوع المكتشف
+                when (detectedType) {
+                    SourceType.STALKER, SourceType.MAC_PORTAL -> {
+                        if (currentState.macAddress.isEmpty()) {
+                            // توليد MAC تلقائياً
+                            generateMAC()
+                            delay(500) // انتظار قصير لضمان التحديث
+                        }
+                        
+                        // اكتشاف portal endpoint
+                        _validationMessage.value = "اكتشاف portal endpoint..."
+                        val detectedEndpoint = validationService.discoverStalkerEndpoint(url)
+                        Log.d(TAG, "تم اكتشاف endpoint: $detectedEndpoint")
+                        
+                        _uiState.value = _uiState.value.copy(
+                            portalPath = detectedEndpoint ?: "/stalker_portal/server/load.php"
+                        )
+                    }
+                    
+                    SourceType.XTREAM -> {
+                        if (currentState.username.isEmpty() || currentState.password.isEmpty()) {
+                            _validationMessage.value = "يرجى إدخال اسم المستخدم وكلمة المرور لـ Xtream Codes"
+                            return@launch
+                        }
+                    }
+                    
+                    SourceType.M3U -> {
+                        // M3U لا يتطلب معلومات إضافية
+                    }
+                }
+                
+                // التحقق الفعلي من المصدر
+                _validationMessage.value = "جاري التحقق من المصدر..."
+                
+                val validationResult = validationService.validateSource(
+                    sourceType = detectedType,
+                    url = url,
+                    username = currentState.username.takeIf { it.isNotEmpty() },
+                    password = currentState.password.takeIf { it.isNotEmpty() },
+                    macAddress = currentState.macAddress.takeIf { it.isNotEmpty() },
+                    portalPath = currentState.portalPath.takeIf { it.isNotEmpty() }
+                )
+                
+                _uiState.value = _uiState.value.copy(
+                    validationResult = validationResult,
+                    detectedPortalPath = validationResult.detectedPortalPath,
+                    serverInfo = validationResult.serverInfo,
+                    statistics = validationResult.statistics
+                )
+                
+                if (validationResult.isValid) {
+                    val serverInfoText = validationResult.serverInfo?.let { info ->
+                        val location = listOfNotNull(info.city, info.country).joinToString(", ")
+                        if (location.isNotEmpty()) " - $location" else ""
+                    } ?: ""
+                    
+                    val statsText = validationResult.statistics?.let { stats ->
+                        " (${stats.totalChannels} قناة)"
+                    } ?: ""
+                    
+                    _validationMessage.value = "✅ المصدر صالح$serverInfoText$statsText"
+                    
+                    // تحديث المعلومات المكتشفة
+                    validationResult.detectedPortalPath?.let { path ->
+                        _uiState.value = _uiState.value.copy(portalPath = path)
+                    }
+                    
+                } else {
+                    val issues = validationResult.issues.joinToString("\n• ", "• ")
+                    _validationMessage.value = "❌ فشل التحقق:\n$issues"
+                }
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "خطأ في التحقق الذكي", e)
+                _validationMessage.value = "خطأ في التحقق: ${e.localizedMessage ?: e.message}"
+            } finally {
+                _uiState.value = _uiState.value.copy(isValidating = false)
+            }
+        }
+    }
+    
+    fun detectSourceTypeAuto() {
+        if (_uiState.value.url.isEmpty()) return
+        
+        viewModelScope.launch {
+            try {
+                Log.d(TAG, "اكتشاف تلقائي لنوع المصدر")
+                
+                val detectedType = validationService.detectSourceType(_uiState.value.url)
+                
+                if (detectedType != null) {
+                    _uiState.value = _uiState.value.copy(
+                        sourceType = detectedType,
+                        detectedSourceType = detectedType
+                    )
+                    
+                    _validationMessage.value = "تم اكتشاف نوع المصدر: ${getSourceTypeName(detectedType)}"
+                    
+                    // إجراءات إضافية حسب النوع
+                    when (detectedType) {
+                        SourceType.STALKER, SourceType.MAC_PORTAL -> {
+                            if (_uiState.value.macAddress.isEmpty()) {
+                                generateMAC()
+                            }
+                        }
+                        else -> {}
+                    }
+                } else {
+                    _validationMessage.value = "لا يمكن تحديد نوع المصدر تلقائياً"
+                }
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "خطأ في اكتشاف نوع المصدر", e)
+                _validationMessage.value = "خطأ في اكتشاف النوع: ${e.localizedMessage}"
+            }
+        }
+    }
+    
+    fun getAvailableDevices(): List<String> {
+        return StalkerService.DEVICE_MODELS.values.distinct().sorted()
+    }
+    
+    fun getAvailableMACPrefixes(): List<Pair<String, String>> {
+        return StalkerService.MAC_PREFIXES.map { prefix ->
+            val deviceModel = StalkerService.DEVICE_MODELS[prefix] ?: "Generic Device"
+            prefix to deviceModel
+        }
+    }
+    
+    fun updateAdvancedSettings(
+        userAgent: String? = null,
+        referer: String? = null,
+        timezone: String? = null
+    ) {
+        _uiState.value = _uiState.value.copy(
+            userAgent = userAgent ?: _uiState.value.userAgent,
+            referer = referer ?: _uiState.value.referer,
+            timezone = timezone ?: _uiState.value.timezone
+        )
     }
     
     fun addSource() {
@@ -322,11 +536,21 @@ class AddSourceViewModel @Inject constructor(
             SourceType.MAC_PORTAL -> "MAC Portal"
         }
     }
+    
+    private fun getSourceTypeName(type: SourceType): String {
+        return when (type) {
+            SourceType.M3U -> "M3U Playlist"
+            SourceType.STALKER -> "Stalker Portal"
+            SourceType.XTREAM -> "Xtream Codes"
+            SourceType.MAC_PORTAL -> "MAC Portal"
+        }
+    }
 }
 
 data class AddSourceUiState(
     val name: String = "",
     val selectedType: SourceType = SourceType.M3U,
+    val sourceType: SourceType = SourceType.M3U, // للاكتشاف التلقائي
     val url: String = "",
     val username: String = "",
     val password: String = "",
@@ -334,6 +558,13 @@ data class AddSourceUiState(
     val portalPath: String = "",
     val userAgent: String = "",
     val referer: String = "",
+    val timezone: String = "",
+    val selectedDeviceModel: String = "MAG254",
+    val deviceCredentials: Map<String, String> = emptyMap(),
+    val detectedSourceType: SourceType? = null,
+    val detectedPortalPath: String? = null,
+    val serverInfo: ServerInfo? = null,
+    val statistics: SourceStatistics? = null,
     val isLoading: Boolean = false,
     val isDetecting: Boolean = false,
     val isValidating: Boolean = false,
